@@ -1,0 +1,82 @@
+[
+  {
+    "question": "What exactly is cgroup v2, and why does Kubernetes use it?",
+    "reference": "cgroup v2 is the newer generation of the Linux cgroup API. Kubernetes uses cgroup v2 for resource management and isolation of Pods and containers, including CPU and memory resource requests and limits."
+  },
+  {
+    "question": "What are the main differences between cgroup v1 and cgroup v2 in Kubernetes?",
+    "reference": "cgroup v2 provides a unified hierarchy for managing resources, while cgroup v1 uses separate hierarchies for different controllers. Kubernetes supports cgroup v2 for resource management and recommends using a compatible systemd cgroup driver."
+  },
+  {
+    "question": "What does the Kubernetes control plane actually do in a cluster?",
+    "reference": "The Kubernetes control plane manages the overall state of the cluster. It includes components such as the API server, scheduler, controller manager, and other control-plane services that work together to maintain the desired state."
+  },
+  {
+    "question": "Can you explain how Kubernetes nodes communicate with the control plane?",
+    "reference": "Nodes communicate with the Kubernetes control plane through the Kubernetes API server. Nodes use secure connections and credentials to communicate with the API server, while the control plane can communicate with nodes through the kubelet or proxy mechanisms."
+  },
+  {
+    "question": "What happens when a Kubernetes controller notices that the actual state of the cluster is different from the desired state?",
+    "reference": "A Kubernetes controller observes the current state of resources and takes corrective actions to move the cluster toward the desired state. Controllers continuously reconcile differences between the desired and actual state."
+  },
+  {
+    "question": "Why does Kubernetes use Leases, and what are they mainly used for?",
+    "reference": "Kubernetes uses Lease objects for system-critical capabilities such as Node heartbeats and leader election between instances of control-plane components."
+  },
+  {
+    "question": "What is the purpose of the cloud controller manager in a Kubernetes cluster?",
+    "reference": "The cloud-controller-manager contains cloud-specific control logic and connects a Kubernetes cluster with a cloud provider's API while keeping cloud-specific functionality separate from the rest of Kubernetes."
+  },
+  {
+    "question": "How does Kubernetes handle garbage collection when objects are no longer needed?",
+    "reference": "Kubernetes uses garbage collection mechanisms to clean up resources that are no longer needed, including dependent objects whose owners have been deleted, terminated Pods, completed Jobs, and other stale resources."
+  },
+  {
+    "question": "What happens if I have multiple API servers running different Kubernetes versions during an upgrade?",
+    "reference": "During an upgrade, different API servers may temporarily run different Kubernetes versions. Mixed Version Proxy can allow an API server to proxy resource requests to a peer API server that is able to serve the requested API resource."
+  },
+  {
+    "question": "What problem is the Mixed Version Proxy trying to solve?",
+    "reference": "Mixed Version Proxy helps Kubernetes handle resource requests when API servers are running different versions. It can forward a request to a peer API server that supports the requested resource, helping avoid unexpected 404 errors during upgrades."
+  },
+  {
+    "question": "How does Kubernetes handle logging, and where do system-level logs fit into the picture?",
+    "reference": "Kubernetes provides mechanisms for collecting and accessing logs from containers and system components. System-level logging includes logs produced by operating-system and Kubernetes components running on Nodes."
+  },
+  {
+    "question": "What are Kubernetes addons, and why would I use them in a cluster?",
+    "reference": "Kubernetes add-ons extend cluster functionality by providing additional capabilities such as networking, service discovery, visualization, infrastructure integration, and instrumentation."
+  },
+  {
+    "question": "Why would a Kubernetes cluster need admission webhooks, and what should I be careful about when using them?",
+    "reference": "Admission webhooks allow external services to participate in the Kubernetes API admission process. They should be designed carefully because webhook failures, latency, or availability problems can affect API requests and cluster operation."
+  },
+  {
+    "question": "How does Kubernetes handle networking between Pods and Nodes?",
+    "reference": "Kubernetes networking provides communication between Pods, Nodes, and Services. Each Pod receives its own IP address, and the Kubernetes networking model allows Pods to communicate with other Pods across Nodes without requiring network address translation."
+  },
+  {
+    "question": "What does Kubernetes node autoscaling actually do when a Pod cannot be scheduled?",
+    "reference": "Node autoscalers can provision additional Nodes when Pods cannot be scheduled on the existing Nodes because additional capacity is required."
+  },
+  {
+    "question": "What information does a node autoscaler look at when deciding what kind of Node to provision?",
+    "reference": "Node autoscalers consider Pod scheduling constraints and Node constraints defined by the autoscaler configuration when deciding which Nodes can satisfy the workload requirements."
+  },
+  {
+    "question": "What's the difference between provisioning Nodes and consolidating Nodes?",
+    "reference": "Provisioning adds Nodes when additional capacity is needed, while consolidation removes or replaces underutilized Nodes to improve utilization and reduce infrastructure cost."
+  },
+  {
+    "question": "How are Cluster Autoscaler and Karpenter different from each other?",
+    "reference": "Cluster Autoscaler generally adds and removes Nodes through pre-configured Node groups, while Karpenter can dynamically provision Nodes based on workload requirements and NodePool constraints and can manage broader aspects of Node lifecycle."
+  },
+  {
+    "question": "What happens when the Kubernetes API server receives too many requests at once, and how does API Priority and Fairness help?",
+    "reference": "API Priority and Fairness controls API server behavior during overload by classifying requests into priority levels, limiting concurrency, queuing requests, and using fair queuing so important requests can continue to receive processing capacity."
+  },
+  {
+    "question": "If one API server doesn't know about a particular API resource but another API server does, how can Mixed Version Proxy handle that request?",
+    "reference": "Mixed Version Proxy can select a peer API server that supports the requested API resource and proxy the request to that server. If the selected peer cannot respond, the source API server can return a 503 Service Unavailable response."
+  }
+]
