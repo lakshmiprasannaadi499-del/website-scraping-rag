@@ -274,7 +274,10 @@ CRAWL_DISCOVERY_LIMIT = _env_int(
 # The new scraper does not call sitemap discovery.
 # ============================================================
 
-USE_SITEMAP_SEED = False
+USE_SITEMAP_SEED = os.getenv(
+    "USE_SITEMAP_SEED",
+    "false"
+).lower() == "true"
 
 SITEMAP_TIMEOUT = _env_int(
     "SITEMAP_TIMEOUT",
