@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from urllib.parse import urljoin, urlparse, urldefrag
+from xml.etree import ElementTree as ET
 
 import requests
 from bs4 import BeautifulSoup
@@ -24,6 +25,7 @@ from app.config import (
     FIRECRAWL_BLOCK_ADS,
     BLOCKED_PATH_KEYWORDS,
     BLOCKED_EXTENSIONS,
+    USE_SITEMAP_SEED,
 )
 
 from app.models import Document
@@ -47,10 +49,14 @@ _PATH_MODES = {
 
 
 # ============================================================
-# JS / THIN CONTENT
+# CONTENT SETTINGS
 # ============================================================
 
 _THIN_CONTENT_THRESHOLD = 250
+
+_MIN_DOCUMENT_CHARS = 100
+
+_MAX_SITEMAPS = 10
 
 
 # ============================================================
@@ -66,11 +72,15 @@ class WebScraper:
         self.session.headers.update(
             {
                 "User-Agent": REQUEST_USER_AGENT,
+
                 "Accept": (
                     "text/html,application/xhtml+xml,"
                     "application/xml;q=0.9,*/*;q=0.8"
                 ),
-                "Accept-Language": "en-US,en;q=0.9",
+
+                "Accept-Language": (
+                    "en-US,en;q=0.9"
+                ),
             }
         )
 
@@ -87,7 +97,7 @@ class WebScraper:
 
         url = url.strip()
 
-        # Remove #fragment.
+        # Remove fragment.
         url, _ = urldefrag(url)
 
         parsed = urlparse(url)
@@ -114,7 +124,7 @@ class WebScraper:
 
         path = parsed.path or "/"
 
-        # Normalize duplicate trailing slash.
+        # Normalize trailing slash.
         if path != "/":
             path = path.rstrip("/")
 
@@ -124,10 +134,8 @@ class WebScraper:
             f"{path}"
         )
 
-        # Keep query parameters because some documentation
-        # sites use them for legitimate pages.
-        #
-        # Tracking parameters are removed below.
+        # Keep legitimate query parameters.
+        # Remove tracking parameters.
         if parsed.query:
 
             query_parts = []
@@ -137,7 +145,10 @@ class WebScraper:
                 if not item:
                     continue
 
-                key = item.split("=", 1)[0].lower()
+                key = item.split(
+                    "=",
+                    1,
+                )[0].lower()
 
                 if key in {
                     "utm_source",
@@ -153,8 +164,12 @@ class WebScraper:
                 query_parts.append(item)
 
             if query_parts:
-                normalized += "?" + "&".join(
-                    query_parts
+
+                normalized += (
+                    "?"
+                    + "&".join(
+                        query_parts
+                    )
                 )
 
         return normalized
@@ -202,21 +217,15 @@ class WebScraper:
         # ----------------------------------------------------
         # PATH MODE
         #
-        # IMPORTANT:
-        #
-        # We deliberately use the FIRST path segment.
-        #
         # Example:
         #
-        # /docs/home/
+        # https://example.com/docs/home/
         #
         # becomes:
         #
-        # /docs/
+        # https://example.com/docs/*
         #
-        # NOT:
-        #
-        # /docs/home/
+        # This is intentionally broader than /docs/home/.
         # ----------------------------------------------------
 
         path_parts = [
@@ -296,37 +305,25 @@ class WebScraper:
             normalized
         )
 
-        # ----------------------------------------------------
         # Exact domain.
-        # ----------------------------------------------------
-
         if (
             parsed.netloc.lower()
             != scope["domain"]
         ):
             return False
 
-        # ----------------------------------------------------
         # Same protocol.
-        # ----------------------------------------------------
-
         if (
             parsed.scheme.lower()
             != scope["scheme"]
         ):
             return False
 
-        # ----------------------------------------------------
         # Whole domain.
-        # ----------------------------------------------------
-
         if scope["mode"] == "domain":
             return True
 
-        # ----------------------------------------------------
-        # Path scope.
-        # ----------------------------------------------------
-
+        # Path mode.
         path = parsed.path or "/"
 
         scope_path = scope["path"]
@@ -340,7 +337,7 @@ class WebScraper:
 
 
     # ========================================================
-    # VALID DOCUMENTATION LINK?
+    # VALID LINK
     # ========================================================
 
     @staticmethod
@@ -363,13 +360,15 @@ class WebScraper:
             parsed.path or "/"
         ).lower()
 
+
         # ----------------------------------------------------
-        # Block files.
+        # Block file extensions.
         # ----------------------------------------------------
 
         for extension in BLOCKED_EXTENSIONS:
 
             if path.endswith(extension):
+
                 return False
 
 
@@ -379,18 +378,21 @@ class WebScraper:
 
         for keyword in BLOCKED_PATH_KEYWORDS:
 
-            if keyword in path:
+            if keyword.lower() in path:
+
                 return False
 
 
         # ----------------------------------------------------
-        # Additional non-document resources.
+        # Cloudflare internal paths.
         # ----------------------------------------------------
 
         if path.startswith(
             "/cdn-cgi/"
         ):
+
             return False
+
 
         return True
 
@@ -408,11 +410,13 @@ class WebScraper:
             not USE_FIRECRAWL_FALLBACK
             or not FIRECRAWL_API_KEY
         ):
+
             return None
 
         try:
 
             response = requests.post(
+
                 "https://api.firecrawl.dev/v1/scrape",
 
                 headers={
@@ -420,12 +424,14 @@ class WebScraper:
                         f"Bearer "
                         f"{FIRECRAWL_API_KEY}"
                     ),
+
                     "Content-Type": (
                         "application/json"
                     ),
                 },
 
                 json={
+
                     "url": url,
 
                     "formats": [
@@ -456,6 +462,7 @@ class WebScraper:
             )
 
             return text or None
+
 
         except Exception as exc:
 
@@ -489,15 +496,23 @@ class WebScraper:
 
             try:
 
-                response = self.session.get(
-                    url,
-                    timeout=LOCAL_REQUEST_TIMEOUT,
-                    allow_redirects=True,
+                response = (
+                    self.session.get(
+
+                        url,
+
+                        timeout=(
+                            LOCAL_REQUEST_TIMEOUT
+                        ),
+
+                        allow_redirects=True,
+                    )
                 )
 
                 response.raise_for_status()
 
                 return response
+
 
             except requests.RequestException as exc:
 
@@ -514,7 +529,7 @@ class WebScraper:
                     )
 
                     print(
-                        f"[RETRY] "
+                        "[RETRY] "
                         f"{attempt + 1}/"
                         f"{attempts - 1}"
                     )
@@ -525,11 +540,309 @@ class WebScraper:
 
 
         if last_exception:
+
             raise last_exception
 
         raise requests.RequestException(
             "Unknown request failure."
         )
+
+
+    # ========================================================
+    # SITEMAP DISCOVERY
+    #
+    # This is a FALLBACK.
+    #
+    # Normal crawling still starts from the URL and follows
+    # normal HTML links first.
+    # ========================================================
+
+    def _discover_sitemap_urls(
+        self,
+        start_url: str,
+        scope: dict,
+    ) -> list[str]:
+
+        if not USE_SITEMAP_SEED:
+
+            return []
+
+
+        parsed = urlparse(
+            start_url
+        )
+
+        origin = (
+            f"{parsed.scheme}://"
+            f"{parsed.netloc}"
+        )
+
+
+        # ----------------------------------------------------
+        # First check robots.txt.
+        # ----------------------------------------------------
+
+        robots_url = (
+            f"{origin}/robots.txt"
+        )
+
+        sitemap_candidates = []
+
+
+        try:
+
+            response = self.session.get(
+                robots_url,
+                timeout=LOCAL_REQUEST_TIMEOUT,
+            )
+
+            if response.ok:
+
+                for line in response.text.splitlines():
+
+                    line = line.strip()
+
+                    if line.lower().startswith(
+                        "sitemap:"
+                    ):
+
+                        sitemap_url = (
+                            line.split(
+                                ":",
+                                1,
+                            )[1].strip()
+                        )
+
+                        if sitemap_url:
+
+                            sitemap_candidates.append(
+                                sitemap_url
+                            )
+
+
+        except Exception as exc:
+
+            print(
+                "[SITEMAP] "
+                f"robots.txt failed: {exc}"
+            )
+
+
+        # ----------------------------------------------------
+        # Common sitemap locations.
+        # ----------------------------------------------------
+
+        sitemap_candidates.extend(
+            [
+                f"{origin}/sitemap.xml",
+                f"{origin}/sitemap_index.xml",
+                f"{origin}/sitemap-index.xml",
+            ]
+        )
+
+
+        # Remove duplicates.
+        sitemap_candidates = list(
+            dict.fromkeys(
+                sitemap_candidates
+            )
+        )
+
+
+        sitemap_urls = []
+
+        visited_sitemaps = set()
+
+        sitemap_queue = deque(
+            sitemap_candidates
+        )
+
+
+        while (
+            sitemap_queue
+            and len(visited_sitemaps)
+            < _MAX_SITEMAPS
+        ):
+
+            sitemap_url = sitemap_queue.popleft()
+
+            sitemap_url = (
+                self.normalize_url(
+                    sitemap_url
+                )
+            )
+
+            if not sitemap_url:
+                continue
+
+            if sitemap_url in visited_sitemaps:
+                continue
+
+            visited_sitemaps.add(
+                sitemap_url
+            )
+
+
+            print(
+                f"[SITEMAP CHECK] "
+                f"{sitemap_url}"
+            )
+
+
+            try:
+
+                response = self.session.get(
+                    sitemap_url,
+                    timeout=LOCAL_REQUEST_TIMEOUT,
+                )
+
+                if not response.ok:
+
+                    continue
+
+
+                content = response.text
+
+                root = ET.fromstring(
+                    content
+                )
+
+
+                # Remove XML namespace.
+                tag_name = (
+                    root.tag
+                    .split("}")
+                    [-1]
+                    .lower()
+                )
+
+
+                # ------------------------------------------------
+                # Sitemap index.
+                # ------------------------------------------------
+
+                if tag_name == "sitemapindex":
+
+                    for element in root:
+
+                        child_tag = (
+                            element.tag
+                            .split("}")
+                            [-1]
+                            .lower()
+                        )
+
+                        if child_tag != "sitemap":
+                            continue
+
+                        for child in element:
+
+                            child_name = (
+                                child.tag
+                                .split("}")
+                                [-1]
+                                .lower()
+                            )
+
+                            if child_name == "loc":
+
+                                child_url = (
+                                    child.text
+                                    or ""
+                                ).strip()
+
+                                if child_url:
+
+                                    sitemap_queue.append(
+                                        child_url
+                                    )
+
+
+                # ------------------------------------------------
+                # Normal URL sitemap.
+                # ------------------------------------------------
+
+                elif tag_name == "urlset":
+
+                    for element in root:
+
+                        child_tag = (
+                            element.tag
+                            .split("}")
+                            [-1]
+                            .lower()
+                        )
+
+                        if child_tag != "url":
+                            continue
+
+                        for child in element:
+
+                            child_name = (
+                                child.tag
+                                .split("}")
+                                [-1]
+                                .lower()
+                            )
+
+                            if child_name != "loc":
+                                continue
+
+                            page_url = (
+                                child.text
+                                or ""
+                            ).strip()
+
+                            page_url = (
+                                self.normalize_url(
+                                    page_url
+                                )
+                            )
+
+                            if not page_url:
+                                continue
+
+                            if not self.is_valid_link(
+                                page_url
+                            ):
+                                continue
+
+                            if not self.is_in_scope(
+                                page_url,
+                                scope,
+                            ):
+                                continue
+
+                            sitemap_urls.append(
+                                page_url
+                            )
+
+
+            except Exception as exc:
+
+                print(
+                    "[SITEMAP] "
+                    f"Failed {sitemap_url}: "
+                    f"{exc}"
+                )
+
+
+        sitemap_urls = list(
+            dict.fromkeys(
+                sitemap_urls
+            )
+        )
+
+
+        print(
+            f"[SITEMAP] "
+            f"Discovered "
+            f"{len(sitemap_urls)} "
+            f"in-scope URLs."
+        )
+
+
+        return sitemap_urls
 
 
     # ========================================================
@@ -545,19 +858,25 @@ class WebScraper:
         try:
 
             print()
+
             print(
                 f"[GET] {url}"
             )
 
+
             response = (
-                self._get_with_retry(url)
+                self._get_with_retry(
+                    url
+                )
             )
+
 
             final_url = (
                 self.normalize_url(
                     response.url
                 )
             )
+
 
             # ------------------------------------------------
             # Redirect must remain in scope.
@@ -577,7 +896,7 @@ class WebScraper:
 
 
             # ------------------------------------------------
-            # Only HTML.
+            # HTML only.
             # ------------------------------------------------
 
             content_type = (
@@ -588,6 +907,7 @@ class WebScraper:
                 )
                 .lower()
             )
+
 
             if (
                 "text/html"
@@ -613,7 +933,7 @@ class WebScraper:
 
 
             # ------------------------------------------------
-            # Page title.
+            # Title.
             # ------------------------------------------------
 
             title = ""
@@ -621,8 +941,7 @@ class WebScraper:
             if soup.title:
 
                 title = (
-                    soup.title
-                    .get_text(
+                    soup.title.get_text(
                         " ",
                         strip=True,
                     )
@@ -632,14 +951,13 @@ class WebScraper:
             # =================================================
             # LINK DISCOVERY
             #
-            # VERY IMPORTANT:
+            # IMPORTANT:
             #
-            # We collect links BEFORE removing nav/sidebar.
-            #
-            # This means documentation sidebars count.
+            # Discover links BEFORE deleting navigation.
             # =================================================
 
             discovered_links = []
+
 
             for anchor in soup.find_all(
                 "a",
@@ -653,6 +971,7 @@ class WebScraper:
                 if not href:
                     continue
 
+
                 absolute_url = (
                     urljoin(
                         final_url,
@@ -660,19 +979,23 @@ class WebScraper:
                     )
                 )
 
+
                 absolute_url = (
                     self.normalize_url(
                         absolute_url
                     )
                 )
 
+
                 if not absolute_url:
                     continue
+
 
                 if not self.is_valid_link(
                     absolute_url
                 ):
                     continue
+
 
                 if not self.is_in_scope(
                     absolute_url,
@@ -680,21 +1003,21 @@ class WebScraper:
                 ):
                     continue
 
+
                 discovered_links.append(
                     absolute_url
                 )
+
 
                 if (
                     len(discovered_links)
                     >= MAX_LINKS_PER_PAGE
                 ):
+
                     break
 
 
-            # ------------------------------------------------
-            # Remove duplicates while keeping order.
-            # ------------------------------------------------
-
+            # Remove duplicates.
             discovered_links = list(
                 dict.fromkeys(
                     discovered_links
@@ -723,7 +1046,7 @@ class WebScraper:
 
 
             # ------------------------------------------------
-            # Prefer main documentation content.
+            # Main content preference.
             # ------------------------------------------------
 
             main = (
@@ -753,8 +1076,13 @@ class WebScraper:
 
 
             # =================================================
-            # FIRECRAWL FALLBACK
+            # FIRECRAWL CONTENT FALLBACK
             # =================================================
+
+            crawl_method = (
+                "requests+bs4"
+            )
+
 
             if (
                 len(text)
@@ -766,6 +1094,7 @@ class WebScraper:
                         final_url
                     )
                 )
+
 
                 if (
                     firecrawl_text
@@ -781,39 +1110,23 @@ class WebScraper:
                         "firecrawl"
                     )
 
-                else:
-
-                    crawl_method = (
-                        "requests+bs4"
-                    )
-
-            else:
-
-                crawl_method = (
-                    "requests+bs4"
-                )
-
 
             # =================================================
-            # CONTENT TOO SMALL
+            # IMPORTANT
             #
-            # IMPORTANT:
-            #
-            # Even when content is too small,
-            # we return discovered links.
-            #
-            # This allows the BFS to continue.
+            # Even if page content is poor,
+            # discovered links are returned.
             # =================================================
 
-            if len(text) < 100:
+            if len(text) < _MIN_DOCUMENT_CHARS:
 
                 print(
-                    f"[NO CONTENT] "
+                    "[NO CONTENT] "
                     f"{len(text)} chars"
                 )
 
                 print(
-                    f"[LINKS FOUND] "
+                    "[LINKS FOUND] "
                     f"{len(discovered_links)}"
                 )
 
@@ -847,14 +1160,14 @@ class WebScraper:
 
 
             print(
-                f"[CONTENT] "
+                "[CONTENT] "
                 f"{len(text)} chars"
             )
 
             print(
-                f"[LINKS] "
+                "[LINKS] "
                 f"{len(discovered_links)} "
-                f"in-scope links"
+                "in-scope links"
             )
 
 
@@ -867,7 +1180,7 @@ class WebScraper:
         except requests.RequestException as exc:
 
             print(
-                f"[REQUEST ERROR] "
+                "[REQUEST ERROR] "
                 f"{url}: {exc}"
             )
 
@@ -877,7 +1190,7 @@ class WebScraper:
         except Exception as exc:
 
             print(
-                f"[EXTRACTION ERROR] "
+                "[EXTRACTION ERROR] "
                 f"{url}: {exc}"
             )
 
@@ -894,7 +1207,7 @@ class WebScraper:
     ) -> list[Document]:
 
         # ----------------------------------------------------
-        # Normalize starting URL.
+        # Normalize start URL.
         # ----------------------------------------------------
 
         start_url = (
@@ -902,6 +1215,7 @@ class WebScraper:
                 start_url
             )
         )
+
 
         if not start_url:
 
@@ -924,9 +1238,15 @@ class WebScraper:
         # ====================================================
 
         print()
+
         print("=" * 80)
-        print("WEBRAG LINK-GRAPH CRAWLER")
+
+        print(
+            "WEBSITE DOCUMENTATION CRAWLER"
+        )
+
         print("=" * 80)
+
 
         print(
             f"Starting URL       : "
@@ -969,55 +1289,43 @@ class WebScraper:
         )
 
         print()
-        print("CRAWL STRATEGY")
+
+        print(
+            "CRAWL STRATEGY"
+        )
+
         print("-" * 80)
 
         print(
-            "1. Start ONLY from the supplied URL."
+            "1. Start from supplied URL."
         )
 
         print(
-            "2. Crawl that page."
+            "2. Discover normal HTML links."
         )
 
         print(
-            "3. Extract its <a href> links."
+            "3. Crawl discovered links using BFS."
         )
 
         print(
-            "4. Keep only in-scope links."
+            "4. If enabled, use sitemap as "
+            "a discovery fallback."
         )
 
         print(
-            "5. Put those links into BFS queue."
+            "5. Respect domain/path scope."
         )
 
         print(
-            "6. Crawl the next link."
-        )
-
-        print(
-            "7. Repeat recursively."
-        )
-
-        print(
-            "8. Stop at 500 usable pages."
-        )
-
-        print()
-        print(
-            "SITEMAP SEEDING: DISABLED"
-        )
-
-        print(
-            "DOMAIN JUMPING: DISABLED"
+            "6. Stop at configured limits."
         )
 
         print("=" * 80)
 
 
         # ====================================================
-        # BFS DATA STRUCTURES
+        # BFS DATA
         # ====================================================
 
         queue = deque()
@@ -1032,9 +1340,7 @@ class WebScraper:
 
 
         # ====================================================
-        # CRITICAL:
-        #
-        # THE ONLY INITIAL SEED.
+        # ONLY INITIAL SEED
         # ====================================================
 
         queue.append(
@@ -1050,19 +1356,20 @@ class WebScraper:
 
 
         print()
+
         print(
             f"[SEED] {start_url}"
         )
 
 
         # ====================================================
-        # BFS LOOP
+        # HTML BFS
         # ====================================================
 
         while queue:
 
             # ------------------------------------------------
-            # Maximum pages.
+            # Page limit.
             # ------------------------------------------------
 
             if (
@@ -1070,11 +1377,9 @@ class WebScraper:
                 >= CRAWL_LIMIT
             ):
 
-                print()
                 print(
-                    f"[STOP] "
-                    f"Reached "
-                    f"{CRAWL_LIMIT} pages."
+                    "[STOP] "
+                    f"Reached {CRAWL_LIMIT} pages."
                 )
 
                 break
@@ -1089,7 +1394,6 @@ class WebScraper:
                 >= CRAWL_DISCOVERY_LIMIT
             ):
 
-                print()
                 print(
                     "[STOP] "
                     "Discovery safety limit reached."
@@ -1097,10 +1401,6 @@ class WebScraper:
 
                 break
 
-
-            # ------------------------------------------------
-            # Get next URL.
-            # ------------------------------------------------
 
             current_url, depth = (
                 queue.popleft()
@@ -1111,11 +1411,8 @@ class WebScraper:
             )
 
 
-            # ------------------------------------------------
-            # Already visited?
-            # ------------------------------------------------
-
             if current_url in visited:
+
                 continue
 
 
@@ -1126,17 +1423,13 @@ class WebScraper:
             discovery_count += 1
 
 
-            # ------------------------------------------------
-            # Scope check.
-            # ------------------------------------------------
-
             if not self.is_in_scope(
                 current_url,
                 scope,
             ):
 
                 print(
-                    f"[OUT OF SCOPE] "
+                    "[OUT OF SCOPE] "
                     f"{current_url}"
                 )
 
@@ -1148,6 +1441,7 @@ class WebScraper:
             # =================================================
 
             print()
+
             print("-" * 80)
 
             print(
@@ -1157,22 +1451,19 @@ class WebScraper:
             )
 
             print(
-                f"DEPTH: {depth}"
+                f"DEPTH   : {depth}"
             )
 
             print(
-                f"VISITED: "
-                f"{discovery_count}"
+                f"VISITED : {discovery_count}"
             )
 
             print(
-                f"QUEUE: "
-                f"{len(queue)}"
+                f"QUEUE   : {len(queue)}"
             )
 
             print(
-                f"URL: "
-                f"{current_url}"
+                f"URL     : {current_url}"
             )
 
             print("-" * 80)
@@ -1187,7 +1478,7 @@ class WebScraper:
 
 
             # =================================================
-            # STORE PAGE
+            # STORE DOCUMENT
             # =================================================
 
             if document is not None:
@@ -1201,9 +1492,8 @@ class WebScraper:
                 )
 
                 print(
-                    f"[SAVED] "
-                    f"Page "
-                    f"{len(documents)}"
+                    "[SAVED] "
+                    f"Page {len(documents)}"
                 )
 
             else:
@@ -1214,32 +1504,21 @@ class WebScraper:
 
 
             # =================================================
-            # FOLLOW DISCOVERED LINKS
+            # FOLLOW HTML LINKS
             # =================================================
 
             if depth < CRAWL_MAX_DEPTH:
 
                 new_links = 0
 
-                for link in links:
 
-                    # ----------------------------------------
-                    # Already visited?
-                    # ----------------------------------------
+                for link in links:
 
                     if link in visited:
                         continue
 
-                    # ----------------------------------------
-                    # Already queued?
-                    # ----------------------------------------
-
                     if link in queued:
                         continue
-
-                    # ----------------------------------------
-                    # Must be in scope.
-                    # ----------------------------------------
 
                     if not self.is_in_scope(
                         link,
@@ -1247,9 +1526,6 @@ class WebScraper:
                     ):
                         continue
 
-                    # ----------------------------------------
-                    # Add to BFS queue.
-                    # ----------------------------------------
 
                     queue.append(
                         (
@@ -1265,10 +1541,6 @@ class WebScraper:
                     new_links += 1
 
 
-                    # ----------------------------------------
-                    # Safety.
-                    # ----------------------------------------
-
                     if (
                         discovery_count
                         + len(queue)
@@ -1279,16 +1551,15 @@ class WebScraper:
 
 
                 print(
-                    f"[NEW LINKS] "
+                    "[NEW LINKS] "
                     f"{new_links}"
                 )
+
 
             else:
 
                 print(
-                    "[DEPTH LIMIT] "
-                    "Not following links from "
-                    "this page."
+                    "[DEPTH LIMIT]"
                 )
 
 
@@ -1307,36 +1578,268 @@ class WebScraper:
 
 
         # ====================================================
+        # SITEMAP FALLBACK
+        #
+        # If normal HTML crawling did not discover enough
+        # pages, use sitemap URLs as additional BFS seeds.
+        # ====================================================
+
+        if (
+            USE_SITEMAP_SEED
+            and len(documents)
+            < CRAWL_LIMIT
+        ):
+
+            print()
+
+            print("=" * 80)
+
+            print(
+                "HTML LINK GRAPH FINISHED"
+            )
+
+            print(
+                f"Current pages: "
+                f"{len(documents)}"
+            )
+
+            print(
+                "Trying sitemap discovery..."
+            )
+
+            print("=" * 80)
+
+
+            sitemap_urls = (
+                self._discover_sitemap_urls(
+                    start_url,
+                    scope,
+                )
+            )
+
+
+            sitemap_added = 0
+
+
+            for sitemap_url in sitemap_urls:
+
+                if (
+                    len(documents)
+                    >= CRAWL_LIMIT
+                ):
+
+                    break
+
+
+                if (
+                    sitemap_url in visited
+                    or sitemap_url in queued
+                ):
+
+                    continue
+
+
+                queue.append(
+                    (
+                        sitemap_url,
+                        0,
+                    )
+                )
+
+                queued.add(
+                    sitemap_url
+                )
+
+                sitemap_added += 1
+
+
+            print(
+                "[SITEMAP] "
+                f"Added {sitemap_added} "
+                "URLs to crawl queue."
+            )
+
+
+            # =================================================
+            # CRAWL SITEMAP URLS
+            # =================================================
+
+            while queue:
+
+                if (
+                    len(documents)
+                    >= CRAWL_LIMIT
+                ):
+
+                    print(
+                        "[STOP] "
+                        f"Reached {CRAWL_LIMIT} pages."
+                    )
+
+                    break
+
+
+                if (
+                    discovery_count
+                    >= CRAWL_DISCOVERY_LIMIT
+                ):
+
+                    print(
+                        "[STOP] "
+                        "Discovery safety limit reached."
+                    )
+
+                    break
+
+
+                current_url, depth = (
+                    queue.popleft()
+                )
+
+                queued.discard(
+                    current_url
+                )
+
+
+                if current_url in visited:
+
+                    continue
+
+
+                visited.add(
+                    current_url
+                )
+
+                discovery_count += 1
+
+
+                if not self.is_in_scope(
+                    current_url,
+                    scope,
+                ):
+
+                    continue
+
+
+                print()
+
+                print("-" * 80)
+
+                print(
+                    f"SITEMAP PAGE "
+                    f"{len(documents) + 1}/"
+                    f"{CRAWL_LIMIT}"
+                )
+
+                print(
+                    f"URL: {current_url}"
+                )
+
+                print("-" * 80)
+
+
+                document, links = (
+                    self.extract_page(
+                        current_url,
+                        scope,
+                    )
+                )
+
+
+                if document is not None:
+
+                    document.metadata[
+                        "depth"
+                    ] = depth
+
+                    documents.append(
+                        document
+                    )
+
+                    print(
+                        "[SAVED] "
+                        f"Page {len(documents)}"
+                    )
+
+
+                # Continue normal link discovery
+                # from sitemap pages too.
+
+                if depth < CRAWL_MAX_DEPTH:
+
+                    for link in links:
+
+                        if link in visited:
+                            continue
+
+                        if link in queued:
+                            continue
+
+                        if not self.is_in_scope(
+                            link,
+                            scope,
+                        ):
+                            continue
+
+
+                        queue.append(
+                            (
+                                link,
+                                depth + 1,
+                            )
+                        )
+
+                        queued.add(
+                            link
+                        )
+
+
+                if (
+                    CRAWL_REQUEST_DELAY
+                    > 0
+                ):
+
+                    time.sleep(
+                        CRAWL_REQUEST_DELAY
+                    )
+
+
+        # ====================================================
         # FINISHED
         # ====================================================
 
         print()
-        print("=" * 80)
-        print("CRAWLING FINISHED")
+
         print("=" * 80)
 
         print(
-            f"Pages successfully extracted : "
+            "CRAWLING FINISHED"
+        )
+
+        print("=" * 80)
+
+        print(
+            "Pages successfully extracted : "
             f"{len(documents)}"
         )
 
         print(
-            f"Target maximum               : "
+            "Target maximum               : "
             f"{CRAWL_LIMIT}"
         )
 
         print(
-            f"URLs visited                 : "
+            "URLs visited                 : "
             f"{discovery_count}"
         )
 
         print(
-            f"URLs remaining in queue      : "
+            "URLs remaining in queue      : "
             f"{len(queue)}"
         )
 
         print(
-            f"Scope                         : "
+            "Scope                        : "
             f"{self.get_scope_prefix(start_url)}"
         )
 
@@ -1344,7 +1847,7 @@ class WebScraper:
 
 
         # ====================================================
-        # IMPORTANT DIAGNOSTIC
+        # DIAGNOSTIC
         # ====================================================
 
         if (
@@ -1353,22 +1856,27 @@ class WebScraper:
         ):
 
             print()
+
             print("=" * 80)
-            print("WHY DID THE CRAWL STOP?")
+
+            print(
+                "CRAWL STOPPED BEFORE PAGE LIMIT"
+            )
+
             print("=" * 80)
+
 
             if not queue:
 
                 print(
-                    "The BFS queue is empty."
+                    "The crawl queue is empty."
                 )
 
                 print(
-                    "That means the crawler could not "
-                    "discover more usable in-scope "
-                    "<a href> pages from the pages "
-                    "it actually visited."
+                    "The crawler could not discover "
+                    "additional usable pages."
                 )
+
 
             elif (
                 discovery_count
@@ -1376,30 +1884,18 @@ class WebScraper:
             ):
 
                 print(
-                    "The discovery safety limit "
-                    "was reached."
+                    "Discovery safety limit reached."
                 )
+
 
             elif (
                 CRAWL_MAX_DEPTH > 0
             ):
 
                 print(
-                    "The maximum crawl depth "
-                    "was reached."
+                    "Maximum crawl depth reached."
                 )
 
-            print()
-            print(
-                "This is NOT because sitemap.xml "
-                "was ignored."
-            )
-
-            print(
-                "This crawler intentionally uses "
-                "ONLY the link graph starting "
-                "from your supplied URL."
-            )
 
             print("=" * 80)
 
@@ -1409,8 +1905,13 @@ class WebScraper:
         # ====================================================
 
         print()
-        print("CRAWLED PAGES")
+
+        print(
+            "CRAWLED PAGES"
+        )
+
         print("-" * 80)
+
 
         for index, document in enumerate(
             documents,
