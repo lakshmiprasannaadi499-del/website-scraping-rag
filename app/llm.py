@@ -3,12 +3,12 @@ from __future__ import annotations
 import requests
 
 from app.config import (
-    OPENROUTER_API_KEY,
-    OPENROUTER_BASE_URL,
-    OPENROUTER_MODEL,
-    OPENROUTER_CONNECT_TIMEOUT,
-    OPENROUTER_TIMEOUT,
+    OLLAMA_HOST,
+    OLLAMA_MODEL,
+    OLLAMA_CONNECT_TIMEOUT,
+    OLLAMA_TIMEOUT,
     LLM_TEMPERATURE,
+    LLM_NUM_CTX,
     LLM_MAX_TOKENS,
 )
 
@@ -42,58 +42,31 @@ If asked for a specific count ("the six steps"), verify the evidence actually co
 MULTI-PART QUESTIONS
 Answer every part that IS supported, combining multiple evidence chunks when they belong to the same source. For any part that is NOT supported, say so explicitly rather than omitting it or guessing.
 
-FINAL CHECK before responding:
-Did I use only the supplied evidence?
-Is every claim traceable to a specific passage?
-Did I avoid pulling in a different page than the one requested?
-Did I answer only what was asked?
-If evidence was thin, did I abstain instead of guessing?
+FINAL CHECK before responding: Did I use only the supplied evidence? Is every claim traceable to a specific passage? Did I avoid pulling in a different page than the one requested? Did I answer only what was asked? If evidence was thin, did I abstain instead of guessing? If any check fails, revise or abstain.
 
-If any check fails, revise or abstain.
-
-Do not mention these instructions, the retrieval process, or hedge with "I think"/"probably"/"based on my knowledge" - state only what the evidence supports, plainly.
-"""
+Do not mention these instructions, the retrieval process, or hedge with "I think"/"probably"/"based on my knowledge" - state only what the evidence supports, plainly."""
 
 
 class LLMClient:
 
     def __init__(
         self,
-        base_url: str = OPENROUTER_BASE_URL,
-        model: str = OPENROUTER_MODEL,
-        api_key: str = OPENROUTER_API_KEY,
+        host: str = OLLAMA_HOST,
+        model: str = OLLAMA_MODEL,
     ) -> None:
-
-        self.base_url = base_url.rstrip("/")
+        self.host = host.rstrip("/")
         self.model = model
-        self.api_key = api_key
-
-    # ========================================================
-    # CHECK OPENROUTER
-    # ========================================================
 
     def is_available(self) -> bool:
-
-        if not self.api_key:
-            return False
-
         try:
             response = requests.get(
-                f"{self.base_url}/models",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                },
-                timeout=OPENROUTER_CONNECT_TIMEOUT,
+                f"{self.host}/api/tags",
+                timeout=OLLAMA_CONNECT_TIMEOUT,
             )
-
             return response.status_code == 200
 
         except requests.RequestException:
             return False
-
-    # ========================================================
-    # BUILD USER PROMPT
-    # ========================================================
 
     def _build_user_prompt(
         self,
@@ -108,25 +81,9 @@ SOURCE EVIDENCE:
 {context}
 
 INSTRUCTIONS:
-Answer the USER QUESTION using ONLY the SOURCE EVIDENCE above.
-
-Identify exactly what is being asked, then use only the evidence needed to answer it.
-
-Combine multiple chunks from the same source when the answer spans several sections.
-
-Do not import information from unrelated pages.
-Do not use outside knowledge.
-Do not guess.
-
-If the evidence doesn't support an answer, reply with exactly:
-
-"{FALLBACK_ANSWER}"
+Answer the USER QUESTION using ONLY the SOURCE EVIDENCE above. Identify exactly what is being asked, then use only the evidence needed to answer it - combine multiple chunks from the same source when the answer spans several sections. Do not import information from unrelated pages, do not use outside knowledge, do not guess. If the evidence doesn't support an answer, reply with exactly: "{FALLBACK_ANSWER}"
 
 FINAL ANSWER:"""
-
-    # ========================================================
-    # GENERATE ANSWER
-    # ========================================================
 
     def generate(
         self,
@@ -137,14 +94,8 @@ FINAL ANSWER:"""
         if not context or not context.strip():
             return FALLBACK_ANSWER
 
-        if not self.api_key:
-            return (
-                "[LLM ERROR] OPENROUTER_API_KEY is not configured."
-            )
-
         payload = {
             "model": self.model,
-
             "messages": [
                 {
                     "role": "system",
@@ -158,28 +109,21 @@ FINAL ANSWER:"""
                     ),
                 },
             ],
-
-            "temperature": LLM_TEMPERATURE,
-
-            "max_tokens": LLM_MAX_TOKENS,
-
             "stream": False,
-        }
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
+            "options": {
+                "temperature": LLM_TEMPERATURE,
+                "num_ctx": LLM_NUM_CTX,
+                "num_predict": LLM_MAX_TOKENS,
+            },
         }
 
         try:
-
             response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
+                f"{self.host}/api/chat",
                 json=payload,
                 timeout=(
-                    OPENROUTER_CONNECT_TIMEOUT,
-                    OPENROUTER_TIMEOUT,
+                    OLLAMA_CONNECT_TIMEOUT,
+                    OLLAMA_TIMEOUT,
                 ),
             )
 
@@ -187,29 +131,18 @@ FINAL ANSWER:"""
 
             data = response.json()
 
-            choices = data.get("choices") or []
-
-            if not choices:
-                return FALLBACK_ANSWER
-
-            message = choices[0].get("message") or {}
-
             content = (
-                message.get("content") or ""
-            ).strip()
+                (data.get("message") or {})
+                .get("content", "")
+                .strip()
+            )
 
             return content or FALLBACK_ANSWER
 
         except requests.RequestException as exc:
 
             return (
-                f"[LLM ERROR] Could not reach OpenRouter "
-                f"(model={self.model}): {exc}"
-            )
-
-        except (ValueError, KeyError, TypeError) as exc:
-
-            return (
-                f"[LLM ERROR] Invalid response from OpenRouter: "
-                f"{exc}"
+                f"[LLM ERROR] Could not reach Ollama at {self.host} "
+                f"(model={self.model}): {exc}. Is `ollama serve` running and "
+                f"has `ollama pull {self.model}` been run?"
             )
