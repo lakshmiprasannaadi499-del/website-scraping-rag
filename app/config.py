@@ -105,39 +105,39 @@ FIRECRAWL_API_KEY = _env_string(
     "",
 )
 
-OPENROUTER_API_KEY = _env_string(
-    "OPENROUTER_API_KEY",
-    "",
-)
-
 
 # ============================================================
-# OPENROUTER / LLM
+# OLLAMA / LLM
 # ============================================================
 
-OPENROUTER_BASE_URL = _env_string(
-    "OPENROUTER_BASE_URL",
-    "https://openrouter.ai/api/v1",
+OLLAMA_HOST = _env_string(
+    "OLLAMA_HOST",
+    "http://127.0.0.1:11434",
 )
 
-OPENROUTER_MODEL = _env_string(
-    "OPENROUTER_MODEL",
-    "openrouter/free",
+OLLAMA_MODEL = _env_string(
+    "OLLAMA_MODEL",
+    "qwen3:8b",
 )
 
-OPENROUTER_CONNECT_TIMEOUT = _env_int(
-    "OPENROUTER_CONNECT_TIMEOUT",
+OLLAMA_CONNECT_TIMEOUT = _env_int(
+    "OLLAMA_CONNECT_TIMEOUT",
     20,
 )
 
-OPENROUTER_TIMEOUT = _env_int(
-    "OPENROUTER_TIMEOUT",
+OLLAMA_TIMEOUT = _env_int(
+    "OLLAMA_TIMEOUT",
     600,
 )
 
 LLM_TEMPERATURE = _env_float(
     "LLM_TEMPERATURE",
     0.1,
+)
+
+LLM_NUM_CTX = _env_int(
+    "LLM_NUM_CTX",
+    16384,
 )
 
 LLM_MAX_TOKENS = _env_int(
@@ -155,19 +155,37 @@ ENABLE_ANSWER_VERIFICATION = _env_bool(
 # WEBSITE CRAWLING
 # ============================================================
 
+# Maximum successfully extracted pages.
 CRAWL_LIMIT = _env_int(
     "CRAWL_LIMIT",
     500,
 )
 
+# Maximum hyperlink depth.
 CRAWL_MAX_DEPTH = _env_int(
     "CRAWL_MAX_DEPTH",
     30,
 )
 
+# Compatibility aliases.
 CRAWL_DEPTH = CRAWL_MAX_DEPTH
 MAX_CRAWL_DEPTH = CRAWL_MAX_DEPTH
 
+
+# ------------------------------------------------------------
+# IMPORTANT
+#
+# "path" means:
+#
+# https://kubernetes.io/docs/home/
+#
+# becomes:
+#
+# https://kubernetes.io/docs/*
+#
+# The scraper below calculates this from the FIRST path
+# segment of the URL supplied by the user.
+# ------------------------------------------------------------
 
 SCOPE_MODE = _env_string(
     "SCOPE_MODE",
@@ -175,11 +193,19 @@ SCOPE_MODE = _env_string(
 ).lower()
 
 
+# ------------------------------------------------------------
+# We do NOT use external links.
+# ------------------------------------------------------------
+
 ALLOW_EXTERNAL_LINKS = _env_bool(
     "ALLOW_EXTERNAL_LINKS",
     False,
 )
 
+
+# ------------------------------------------------------------
+# Respect robots.txt.
+# ------------------------------------------------------------
 
 IGNORE_ROBOTS_TXT = _env_bool(
     "IGNORE_ROBOTS_TXT",
@@ -187,9 +213,9 @@ IGNORE_ROBOTS_TXT = _env_bool(
 )
 
 
-# ============================================================
-# HTTP SETTINGS
-# ============================================================
+# ------------------------------------------------------------
+# HTTP settings
+# ------------------------------------------------------------
 
 CRAWL_TIMEOUT = _env_int(
     "CRAWL_TIMEOUT",
@@ -212,14 +238,22 @@ CRAWL_REQUEST_DELAY = _env_float(
 )
 
 
-# ============================================================
-# LINK DISCOVERY
-# ============================================================
+# ------------------------------------------------------------
+# Link discovery
+# ------------------------------------------------------------
 
 MAX_LINKS_PER_PAGE = _env_int(
     "MAX_LINKS_PER_PAGE",
     500,
 )
+
+
+# ------------------------------------------------------------
+# Safety limit for discovered URLs.
+#
+# This is NOT the number of pages to crawl.
+# It prevents infinite/crazy link graphs.
+# ------------------------------------------------------------
 
 CRAWL_DISCOVERY_LIMIT = _env_int(
     "CRAWL_DISCOVERY_LIMIT",
@@ -231,10 +265,19 @@ CRAWL_DISCOVERY_LIMIT = _env_int(
 # SITEMAP
 # ============================================================
 
-USE_SITEMAP_SEED = _env_bool(
+# IMPORTANT:
+#
+# The requested crawler MUST NOT use sitemap.xml to seed the
+# crawl.
+#
+# We keep these variables only for compatibility with old code.
+# The new scraper does not call sitemap discovery.
+# ============================================================
+
+USE_SITEMAP_SEED = os.getenv(
     "USE_SITEMAP_SEED",
-    False,
-)
+    "false"
+).lower() == "true"
 
 SITEMAP_TIMEOUT = _env_int(
     "SITEMAP_TIMEOUT",
@@ -322,6 +365,13 @@ BLOCKED_EXTENSIONS = [
 
 # ============================================================
 # FIRECRAWL
+# ============================================================
+
+# Firecrawl is ONLY a content fallback.
+#
+# It does NOT discover URLs.
+# It does NOT seed the crawl.
+# The link graph is always discovered from <a href>.
 # ============================================================
 
 USE_FIRECRAWL_FALLBACK = _env_bool(
@@ -451,6 +501,10 @@ LEXICAL_WEIGHT = _env_float(
 # WHOLE-PAGE RETRIEVAL
 # ============================================================
 
+# IMPORTANT:
+# These variables fix the ImportError from retriever.py.
+# ============================================================
+
 WHOLE_PAGE_PULL_ENABLED = _env_bool(
     "WHOLE_PAGE_PULL_ENABLED",
     True,
@@ -536,7 +590,9 @@ def validate_config() -> None:
             "Increasing it."
         )
 
-        globals()["CRAWL_DISCOVERY_LIMIT"] = CRAWL_LIMIT * 10
+        globals()["CRAWL_DISCOVERY_LIMIT"] = (
+            CRAWL_LIMIT * 10
+        )
 
     allowed_scope_modes = {
         "path",
@@ -594,7 +650,9 @@ def validate_config() -> None:
             "LEXICAL_WEIGHT cannot be negative."
         )
 
-    if SEMANTIC_WEIGHT + LEXICAL_WEIGHT <= 0:
+    if (
+        SEMANTIC_WEIGHT + LEXICAL_WEIGHT
+    ) <= 0:
         raise ValueError(
             "SEMANTIC_WEIGHT + LEXICAL_WEIGHT "
             "must be greater than 0."
@@ -605,14 +663,14 @@ def validate_config() -> None:
             "MAX_CONTEXT_CHARS is too small."
         )
 
-    if not OPENROUTER_BASE_URL:
+    if not OLLAMA_HOST:
         raise ValueError(
-            "OPENROUTER_BASE_URL cannot be empty."
+            "OLLAMA_HOST cannot be empty."
         )
 
-    if not OPENROUTER_MODEL:
+    if not OLLAMA_MODEL:
         raise ValueError(
-            "OPENROUTER_MODEL cannot be empty."
+            "OLLAMA_MODEL cannot be empty."
         )
 
     if not EMBEDDING_MODEL:
@@ -645,7 +703,7 @@ print(
 )
 
 print(
-    f"USE_FIRECRAWL_FALLBACK       = "
+    f"USE_FIRECRAWL_FALLBACK      = "
     f"{USE_FIRECRAWL_FALLBACK}"
 )
 
@@ -664,11 +722,7 @@ print(
     f"{WHOLE_PAGE_PULL_MAX_CHUNKS}"
 )
 
-print(
-    f"OPENROUTER_MODEL             = "
-    f"{OPENROUTER_MODEL}"
-)
-
+print(f"OLLAMA_MODEL                 = {OLLAMA_MODEL}")
 print(f"EMBEDDING_MODEL              = {EMBEDDING_MODEL}")
 print(f"CHUNK_SIZE                   = {CHUNK_SIZE}")
 print(f"CHUNK_OVERLAP                = {CHUNK_OVERLAP}")
