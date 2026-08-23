@@ -10,5 +10,5 @@ Finally, Streamlit displays the retrieved information and generated answer to th
 
 ## 🏗️ Architecture
 
-![WebRAG Studio Architecture](https://github.com/user-attachments/assets/1beddca0-13a2-4229-811c-4efbd27e36a1)
+![WebsiteScraping-Architecture](https://github.com/user-attachments/assets/d84bd6b3-0bc3-4591-9e95-6aa0c00c978f)
 
