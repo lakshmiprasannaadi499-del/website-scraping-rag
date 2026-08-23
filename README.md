@@ -12,3 +12,7 @@ Finally, Streamlit displays the retrieved information and generated answer to th
 
 ![WebsiteScraping-Architecture](https://github.com/user-attachments/assets/d84bd6b3-0bc3-4591-9e95-6aa0c00c978f)
 
+**WebRAG Studio — End-to-End Project Demo**
+
+https://github.com/user-attachments/assets/b8f6fc74-b405-4d38-b839-9754d570c256
+
